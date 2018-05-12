@@ -14,19 +14,19 @@ struct filenode                         //文件节点以链表的形式存储
     int32_t content[16312];
     struct stat st;
     struct filenode *next;
-};
+};//这个filenode大小64KB，与blocksize相同
 struct head
 {
     struct filenode *next;
-    char map[64*1024];
+    char map[64*1024];//于mem一一对应，用于储存该mem是否被使用
 };
-static const size_t size = 1024 * 1024 * (size_t)1024;      //表示大小（总共1G)
-static const size_t blocksize = 64 * (size_t)1024;
+static const size_t size = 1024 * 1024 * (size_t)1024;      //文件系统总共1G
+static const size_t blocksize = 64 * (size_t)1024;          //每一块64KB
 static const size_t blocknum = 16 * 1024;                   //blocknum = 16384
 static void *mem[64* 1024];                                 //mem表示一个指针数组，保存每个block所对应的的指针
 
 int blockcnt = 0;
-int lastused_block = 0;
+int lastused_block = 0;//记录最后一次使用的块，也是alloc_block函数下一次开始找可用块的位置
 
 int alloc_block()
 {
@@ -64,7 +64,7 @@ int deleteblock(int i)//取消内存映射
     blockcnt--;
     return 1;
 }
-int realloc_block(struct filenode *node, int size)
+int realloc_block(struct filenode *node, int size)//根据size重新调整文件的块数，多则在分配，少则取消多余块的映射关系
 {
 
     int num = (size - 1)/blocksize + 1;
@@ -94,8 +94,7 @@ int realloc_block(struct filenode *node, int size)
     node->st.st_size = size;
     return 0;
 }
-static struct filenode *get_filenode(const char *name)          //寻找和name名字一致的文件节点，并将其return，找不到，返回空
-//在fileattr中调用
+static struct filenode *get_filenode(const char *name)
 {
     struct filenode *node = ((struct head*)mem[0])->next;
     while(node)
@@ -108,7 +107,7 @@ static struct filenode *get_filenode(const char *name)          //寻找和name�
     return NULL;
 }
 
-static void create_filenode(const char *filename, const struct stat *st)        //创造一个新的文件节点（在mknod中调用）
+static void create_filenode(const char *filename, const struct stat *st)        //创造一个新的文件节点
 {
     struct head *root = (struct head*)mem[0];
     int num = alloc_block();
@@ -125,7 +124,7 @@ static void create_filenode(const char *filename, const struct stat *st)        
 }
 
 static void *oshfs_init(struct fuse_conn_info *conn)
-{
+{//将文件链表的头节点存入mem[0]中，之后的文件添加便为一个有头节点的头插法实现
     struct head *root;
     mem[0] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     blockcnt = 1;
@@ -141,26 +140,25 @@ static int oshfs_getattr(const char *path, struct stat *stbuf)
 {
     int ret = 0;
     struct filenode *node = get_filenode(path);         //调用get_filenode函数，寻找与路径一致的文件节点
-    if(strcmp(path, "/") == 0)                          //????????
+    if(strcmp(path, "/") == 0)
     {
         memset(stbuf, 0, sizeof(struct stat));
-        stbuf->st_mode = S_IFDIR | 0755;                //缓冲区中的文件保护模式设定为目录
+        stbuf->st_mode = S_IFDIR | 0755;
     }
-    else if(node)                                       //如果节点存在，那么就把节点的文件属性copy到属性缓冲区中
+    else if(node)
         memcpy(stbuf, &(node->st), sizeof(struct stat));
-    else                                                //若不存在，那么就返回错误
+    else
         ret = -ENOENT;
     return ret;
 }
 
 static int oshfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
-//读出所有文件的信息
 {
     struct filenode *node = ((struct head*)mem[0])->next;
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     while(node)
-    {                                       //依次读出每个文件的信息
+    {
         filler(buf, node->filename, &(node->st), 0);
         node = node->next;
     }
@@ -169,13 +167,13 @@ static int oshfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
 
 static int oshfs_mknod(const char *path, mode_t mode, dev_t dev)            //创造一个节点
 {
-    struct stat st;                                                         //定义一个状态结构体
-    st.st_mode = S_IFREG | 0644;                                            //保护模式定义为普通文件
+    struct stat st;
+    st.st_mode = S_IFREG | 0644;
     st.st_uid = fuse_get_context()->uid;
     st.st_gid = fuse_get_context()->gid;
-    st.st_nlink = 1;                                                        //硬链接个数设置为1个
-    st.st_size = 0;                                                         //初始的文件大小为0
-    create_filenode(path + 1, &st);                                         //调用了创造文件节点的函数，并将路径和定义的st和传进去
+    st.st_nlink = 1;
+    st.st_size = 0;
+    create_filenode(path + 1, &st);
     return 0;
 }
 
@@ -200,21 +198,21 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
     byte_cnt = 0;
     while(byte_cnt < size)
     {
-        if(b)
+        if(b)//有块内偏移
         {
-            if(size - byte_cnt < blocksize - b)
+            if(size - byte_cnt < blocksize - b)//不写完一整个块
                 op_size = size - byte_cnt;
-            else
+            else                               //写完一整个块
                 op_size = blocksize - b;
             memcpy(mem[node->content[a]] + b, buf + byte_cnt, op_size);
-            b = 0;
+            b = 0;                             //块内偏移量置零
         }
-        else if(size - byte_cnt < blocksize)
+        else if(size - byte_cnt < blocksize)   //，无块内偏移，不写完整个块
         {
             op_size = size - byte_cnt;
             memcpy((mem[node->content[a]]), buf + byte_cnt, op_size);
         }
-        else
+        else                                   //无块内偏移，写一整个块
         {
             op_size = blocksize;
             memcpy((mem[node->content[a]]), buf + byte_cnt, op_size);
@@ -226,7 +224,7 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 }
 static int oshfs_truncate(const char *path, off_t size)     //用于修改文件的大小
 {
-    struct filenode *node = get_filenode(path);             //打开文件
+    struct filenode *node = get_filenode(path);
     realloc_block(node, size);
     return 0;
 }
@@ -245,21 +243,24 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
     b = offset%blocksize;
     while(byte_cnt < readsize)
     {
-        if(b)
+        if(b)//有块内偏移
         {
-            op_size = blocksize - b;
-            memcpy(mem[node->content[a]] + b, buf + byte_cnt, op_size);
-            b = 0;
+            if(readsize - byte_cnt > blocksize - b)//读整个块
+                op_size = blocksize - b;
+            else                                   //不读一整个块
+                op_size = readsize - byte_cnt;
+            memcpy(buf + byte_cnt, mem[node->content[a]], op_size);
+            b = 0;                                 //将块内偏移量置零
         }
-        else if(readsize - byte_cnt < blocksize)
+        else if(readsize - byte_cnt < blocksize)//无块内偏移，不读一整个块
         {
             op_size = readsize - byte_cnt;
-            memcpy((mem[node->content[a]]), buf + byte_cnt, op_size);
+            memcpy(buf + byte_cnt, mem[node->content[a]], op_size);
         }
-        else
+        else                                       //无块内偏移，读一整个块
         {
             op_size = blocksize;
-            memcpy((mem[node->content[a]]), buf + byte_cnt, op_size);
+            memcpy(buf + byte_cnt, mem[node->content[a]], op_size);
         }
         byte_cnt += op_size;
         a++;
@@ -267,17 +268,17 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
     return size;                                                     //返回读取数据的大小
 }
 
-static int oshfs_unlink(const char *path)               //用于删除一个节点
+static int oshfs_unlink(const char *path)               //用于删除一个文件节点
 {
     struct head *root = (struct head*)mem[0];
     struct filenode *node1 = get_filenode(path);
     struct filenode *node2 = root->next;
-    if (node1 == node2)                        //特殊处理文件为链表头的情况
+    if (node1 == node2)                        //文件为链表头
     {
         root->next=node1->next;
         node1->next=NULL;
     }
-    else if (node1)                         //若node1存在
+    else if (node1)                            //若node1存在
     {
         while(node2->next != node1 && node2)
             node2 = node2->next;
