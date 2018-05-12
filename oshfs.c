@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <fuse.h>
 #include <sys/mman.h>
-
+#include <inttypes.h>
 struct filenode                         //文件节点以链表的形式存储
 {
     char filename[128];
@@ -27,15 +27,15 @@ static void *mem[64* 1024];                                 //mem表示一个指
 
 int blockcnt = 0;
 int lastused_block = 0;
+
 int alloc_block()
 {
     int i;
-
     for(i = lastused_block;i < blocknum; i++)
     {
         if(((struct head*)mem[0])->map[i] == 0)
         {
-            lastused_block = i + 1;
+            lastused_block = (i + 1)%blocknum;
             mem[i] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             ((struct head*)mem[0])->map[i] = 1;
             blockcnt++;
@@ -59,6 +59,7 @@ int deleteblock(int i)//取消内存映射
 {
     munmap(mem[i], blocksize);
     mem[i] = NULL;
+    ((struct head*)mem[0])->map[i] = 0;
     lastused_block = i;
     blockcnt--;
     return 1;
@@ -70,7 +71,7 @@ int realloc_block(struct filenode *node, int size)
     int i, temp;
     if(num > node->filesize)
     {
-        if(blocknum - blockcnt < num - size)
+        if(blocknum - blockcnt < num - node->filesize)
         {
             printf("Not enough space!\n");
             return -1;
@@ -188,13 +189,11 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 {
     struct filenode *node = get_filenode(path);                     //打开文件
     int total = offset + size;
-    if(total > blocknum - blockcnt)
+    if(realloc_block(node, total) == -1)
     {
-        printf("Not enough space!\n");
+        printf("Allocation Error!\n");
         return -1;
     }
-    if(realloc_block(node, total) == -1)
-        printf("Allocation Error!\n");
     int a, b, byte_cnt, op_size;
     a = offset/blocksize;
     b = offset%blocksize;
