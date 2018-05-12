@@ -139,7 +139,7 @@ static void *oshfs_init(struct fuse_conn_info *conn)
 static int oshfs_getattr(const char *path, struct stat *stbuf)
 {
     int ret = 0;
-    struct filenode *node = get_filenode(path);         //调用get_filenode函数，寻找与路径一致的文件节点
+    struct filenode *node = get_filenode(path);
     if(strcmp(path, "/") == 0)
     {
         memset(stbuf, 0, sizeof(struct stat));
@@ -165,7 +165,7 @@ static int oshfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
     return 0;
 }
 
-static int oshfs_mknod(const char *path, mode_t mode, dev_t dev)            //创造一个节点
+static int oshfs_mknod(const char *path, mode_t mode, dev_t dev)
 {
     struct stat st;
     st.st_mode = S_IFREG | 0644;
@@ -222,7 +222,7 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
     }
     return size;
 }
-static int oshfs_truncate(const char *path, off_t size)     //用于修改文件的大小
+static int oshfs_truncate(const char *path, off_t size)     //修改文件的大小
 {
     struct filenode *node = get_filenode(path);
     realloc_block(node, size);
@@ -230,7 +230,7 @@ static int oshfs_truncate(const char *path, off_t size)     //用于修改文件
 }
 
 static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
-//从一个已经打开的文件中读出数据
+//从文件中读出数据
 {
     struct filenode *node = get_filenode(path);
     int readsize;
@@ -265,20 +265,20 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
         byte_cnt += op_size;
         a++;
     }
-    return size;                                                     //返回读取数据的大小
+    return size;                                                   
 }
 
-static int oshfs_unlink(const char *path)               //用于删除一个文件节点
+static int oshfs_unlink(const char *path)               //删除一个文件节点
 {
     struct head *root = (struct head*)mem[0];
     struct filenode *node1 = get_filenode(path);
     struct filenode *node2 = root->next;
-    if (node1 == node2)                        //文件为链表头
+    if (node1 == node2)                       
     {
         root->next=node1->next;
         node1->next=NULL;
     }
-    else if (node1)                            //若node1存在
+    else if (node1)                          
     {
         while(node2->next != node1 && node2)
             node2 = node2->next;
@@ -293,7 +293,7 @@ static int oshfs_unlink(const char *path)               //用于删除一个文�
 
 }
 
-static const struct fuse_operations op = {              //不同的op所对应的函数
+static const struct fuse_operations op = {   
         .init = oshfs_init,
         .getattr = oshfs_getattr,
         .readdir = oshfs_readdir,
@@ -307,5 +307,5 @@ static const struct fuse_operations op = {              //不同的op所对应�
 
 int main(int argc, char *argv[])
 {
-    return fuse_main(argc, argv, &op, NULL);            //调用fuse函数
+    return fuse_main(argc, argv, &op, NULL);  
 }
