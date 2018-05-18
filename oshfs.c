@@ -19,37 +19,39 @@ struct head
 {
     struct filenode *next;
     char map[64*1024];//于mem一一对应，用于储存该mem是否被使用
+    int blockcnt;
+    int lastused_block;
 };
 static const size_t size = 1024 * 1024 * (size_t)1024;      //文件系统总共1G
 static const size_t blocksize = 64 * (size_t)1024;          //每一块64KB
 static const size_t blocknum = 16 * 1024;                   //blocknum = 16384
 static void *mem[64* 1024];                                 //mem表示一个指针数组，保存每个block所对应的的指针
 
-int blockcnt = 0;
-int lastused_block = 0;//记录最后一次使用的块，也是alloc_block函数下一次开始找可用块的位置
+//int blockcnt = 0;
+//int lastused_block = 0;//记录最后一次使用的块，也是alloc_block函数下一次开始找可用块的位置
 
 int alloc_block()
 {
     int i;
-    for(i = lastused_block;i < blocknum; i++)
+    for(i = ((struct head *)mem[0])->lastused_block;i < blocknum; i++)
     {
         if(((struct head*)mem[0])->map[i] == 0)
         {
-            lastused_block = (i + 1)%blocknum;
+            ((struct head *)mem[0])->lastused_block = (i + 1)%blocknum;
             mem[i] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             ((struct head*)mem[0])->map[i] = 1;
-            blockcnt++;
+            ((struct head *)mem[0])->blockcnt++;
             return i;
         }
     }
-    for (i = 0; i < lastused_block; i++)
+    for (i = 0; i < ((struct head *)mem[0])->lastused_block; i++)
     {
         if (((struct head*)mem[0])->map[i] == 0)
         {
-            lastused_block = i + 1;
+            ((struct head *)mem[0])->lastused_block = i + 1;
             mem[i] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             ((struct head*)mem[0])->map[i] = 1;
-            blockcnt++;
+            ((struct head *)mem[0])->blockcnt++;
             return i;
         }
     }
@@ -60,8 +62,8 @@ int deleteblock(int i)//取消内存映射
     munmap(mem[i], blocksize);
     mem[i] = NULL;
     ((struct head*)mem[0])->map[i] = 0;
-    lastused_block = i;
-    blockcnt--;
+    ((struct head *)mem[0])->lastused_block = i;
+    ((struct head *)mem[0])->blockcnt--;
     return 1;
 }
 int realloc_block(struct filenode *node, int size)//根据size重新调整文件的块数，多则在分配，少则取消多余块的映射关系
@@ -71,7 +73,7 @@ int realloc_block(struct filenode *node, int size)//根据size重新调整文件
     int i, temp;
     if(num > node->filesize)
     {
-        if(blocknum - blockcnt < num - node->filesize)
+        if(blocknum - ((struct head *)mem[0])->blockcnt < num - node->filesize)
         {
             printf("Not enough space!\n");
             return -1;
@@ -127,12 +129,13 @@ static void *oshfs_init(struct fuse_conn_info *conn)
 {//将文件链表的头节点存入mem[0]中，之后的文件添加便为一个有头节点的头插法实现
     struct head *root;
     mem[0] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    blockcnt = 1;
     root = (struct head*)mem[0];
     for(int i = 0; i < blocknum; i++)
         root->map[i] = 0;
     root->next = NULL;
     root->map[0] = 1;
+    root->blockcnt = 1;
+    root->lastused_block = 0;
     return NULL;
 }
 
@@ -187,6 +190,8 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 {
     struct filenode *node = get_filenode(path);                     //打开文件
     int total = offset + size;
+    if(total <= node->st.st_size)
+        total = node->st.st_size;
     if(realloc_block(node, total) == -1)
     {
         printf("Allocation Error!\n");
@@ -265,7 +270,7 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
         byte_cnt += op_size;
         a++;
     }
-    return size;                                                   
+    return size;
 }
 
 static int oshfs_unlink(const char *path)               //删除一个文件节点
@@ -273,12 +278,12 @@ static int oshfs_unlink(const char *path)               //删除一个文件节�
     struct head *root = (struct head*)mem[0];
     struct filenode *node1 = get_filenode(path);
     struct filenode *node2 = root->next;
-    if (node1 == node2)                       
+    if (node1 == node2)
     {
         root->next=node1->next;
         node1->next=NULL;
     }
-    else if (node1)                          
+    else if (node1)
     {
         while(node2->next != node1 && node2)
             node2 = node2->next;
@@ -293,7 +298,7 @@ static int oshfs_unlink(const char *path)               //删除一个文件节�
 
 }
 
-static const struct fuse_operations op = {   
+static const struct fuse_operations op = {
         .init = oshfs_init,
         .getattr = oshfs_getattr,
         .readdir = oshfs_readdir,
@@ -307,5 +312,5 @@ static const struct fuse_operations op = {
 
 int main(int argc, char *argv[])
 {
-    return fuse_main(argc, argv, &op, NULL);  
+    return fuse_main(argc, argv, &op, NULL);
 }
